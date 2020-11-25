@@ -4,8 +4,12 @@ namespace App\Console\Commands;
 
 use App\Jobs\SendMail;
 use App\Mail\WelcomeMail;
+use App\Models\EmailJob;
+use App\Models\MonthlyEmail;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
 class SendWelcomeMail extends Command
@@ -41,14 +45,31 @@ class SendWelcomeMail extends Command
      */
     public function handle()
     {
-        try {
+        DB::transaction(function () {
             $user_emails = User::take(1000)->pluck('email')->toArray();
-            foreach ($user_emails as $email) {
-                SendMail::dispatch($email)->onQueue('email');
+            $monthlyEmail = MonthlyEmail::create([
+                'total_jobs' => count($user_emails),
+            ]);
+            $now = Carbon::now();
+            $arr_email_jobs = array_map(
+                function ($email) use ($monthlyEmail, $now) {
+                    return [
+                        'email' => $email,
+                        'monthly_email_id' => $monthlyEmail->id,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
+                },
+                $user_emails
+            );
+            EmailJob::insert($arr_email_jobs);
+
+            $email_jobs = $monthlyEmail->email_jobs;
+            foreach ($email_jobs as $email_job) {
+                SendMail::dispatch($email_job->id)->onQueue('email');
             }
+
             $this->info("Successfully!");
-        } catch (\Exception $ex) {
-            $this->info($ex);
-        }
+        });
     }
 }
